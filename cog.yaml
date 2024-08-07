@@ -23,6 +23,6 @@ build:
     - "numpy<2"
 
   run:
-    - apt-get update -y && apt-get upgrade -y
+    - pip install "git+https://github.com/kylemclaren/cog.git@d486018abab50cb3d9b4edd4916f256009a8bd95"
     
 predict: "predict.py:Predictor"
