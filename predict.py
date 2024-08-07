@@ -153,6 +153,12 @@ class Predictor(BasePredictor):
             choices=["webp", "jpg", "png"],
             default="webp",
         ),
+        output_quality: int = Input(
+            description="Quality when saving the output images, from 0 to 100. 100 is best quality, 0 is lowest quality. Not relevant for .png outputs",
+            default=80,
+            ge=0,
+            le=100,
+        ),
     ) -> List[Path]:
         """Run a single prediction on the model."""
         if seed is None:
@@ -162,7 +168,7 @@ class Predictor(BasePredictor):
         width, height = self.aspect_ratio_to_width_height(aspect_ratio)
 
         flux_kwargs = {}
-        print(f"Prompt: {prompt}")
+
         if image:
             print("img2img mode")
             flux_kwargs["image"] = self.load_image(image)
@@ -193,8 +199,8 @@ class Predictor(BasePredictor):
         for i, image in enumerate(output.images):
             unique_id = sqids.encode([current_timestamp, i])
             output_path = f"/tmp/out-{unique_id}.{output_format}"
-            if output_format != "png":
-                image.save(output_path, optimize=True)
+            if output_format != 'png':
+                image.save(output_path, quality=output_quality, optimize=True)
             else:
                 image.save(output_path)
             output_paths.append(Path(output_path))
