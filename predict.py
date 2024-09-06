@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import torch
 from cog import BasePredictor, Input, Path
-from diffusers import FluxPipeline
+from diffusers import FluxPipeline, FluxImg2ImgPipeline
 
 # from diffusers.pipelines.stable_diffusion.safety_checker import (
 #     StableDiffusionSafetyChecker,
@@ -17,7 +17,7 @@ from diffusers import FluxPipeline
 from diffusers.utils import load_image
 from diffusers.image_processor import VaeImageProcessor
 from transformers import CLIPImageProcessor
-from PIL import ImageOps
+from PIL import ImageOps, Image
 
 
 FLUX_MODEL_CACHE = "/src/flux-cache"
@@ -74,6 +74,26 @@ def generate_presigned_url(bucket_name: str, object_name: str, expiration: int =
     return response
 
 
+def resize_image_dimensions(
+    original_resolution_wh: Tuple[int, int],
+    maximum_dimension: int = 1024
+) -> Tuple[int, int]:
+    width, height = original_resolution_wh
+
+    if width > height:
+        scaling_factor = maximum_dimension / width
+    else:
+        scaling_factor = maximum_dimension / height
+
+    new_width = int(width * scaling_factor)
+    new_height = int(height * scaling_factor)
+
+    new_width = new_width - (new_width % 32)
+    new_height = new_height - (new_height % 32)
+
+    return new_width, new_height
+
+
 class Predictor(BasePredictor):
     def setup(self):
         """Load the model into memory to make running multiple predictions efficient"""
@@ -83,16 +103,27 @@ class Predictor(BasePredictor):
         self.feature_extractor = CLIPImageProcessor.from_pretrained(FEATURE_EXTRACTOR)
 
         print("Loading flux txt2img pipeline...")
+
         self.txt2img_pipe = FluxPipeline.from_pretrained(
             FLUX_MODEL_CACHE, torch_dtype=torch.bfloat16
-        ).to("cuda")
+        )
+
+        self.txt2img_pipe.to("cuda")
+
+        print("Loading flux img2img pipeline...")
+
+        self.img2img_pipe = FluxImg2ImgPipeline.from_pretrained(
+            FLUX_MODEL_CACHE, torch_dtype=torch.bfloat16
+        )
+
+        self.img2img_pipe.image_processor = VaeImageProcessor(
+            vae_scale_factor=16,
+            vae_latent_channels=self.img2img_pipe.vae.config.latent_channels,
+        )
+
+        self.img2img_pipe.to("cuda")
 
         print("setup took: ", time.time() - start)
-
-    def load_image(self, path):
-        shutil.copyfile(path, "/tmp/image.png")
-        tmp_img = load_image("/tmp/image.png").convert("RGB")
-        return ImageOps.contain(tmp_img, (1024, 1024))
 
     def aspect_ratio_to_width_height(self, aspect_ratio: str):
         aspect_ratios = {
@@ -133,7 +164,7 @@ class Predictor(BasePredictor):
         guidance_scale: float = Input(
             description="Scale for classifier-free guidance", ge=0, le=50, default=0.0
         ),
-        max_sequence_length : int = Input(
+        max_sequence_length: int = Input(
             description="Max sequence length", ge=1, le=2048, default=256
         ),
         num_inference_steps: int = Input(
@@ -171,11 +202,16 @@ class Predictor(BasePredictor):
 
         if image:
             print("img2img mode")
-            flux_kwargs["image"] = self.load_image(image)
+            tmp_img = Image.open(image).convert("RGB")
+            width, height = resize_image_dimensions(tmp_img.size)
+            flux_kwargs["image"] = tmp_img.resize((width, height), Image.LANCZOS)
+            flux_kwargs["width"] = width
+            flux_kwargs["height"] = height
             flux_kwargs["strength"] = prompt_strength
             pipe = self.img2img_pipe
         else:
             print("txt2img mode")
+            width, height = resize_image_dimensions((width, height))
             flux_kwargs["width"] = width
             flux_kwargs["height"] = height
             pipe = self.txt2img_pipe
@@ -199,7 +235,7 @@ class Predictor(BasePredictor):
         for i, image in enumerate(output.images):
             unique_id = sqids.encode([current_timestamp, i])
             output_path = f"/tmp/out-{unique_id}.{output_format}"
-            if output_format != 'png':
+            if output_format != "png":
                 image.save(output_path, quality=output_quality, optimize=True)
             else:
                 image.save(output_path)
