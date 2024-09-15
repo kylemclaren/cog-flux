@@ -3,14 +3,14 @@
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
-app = ''
-primary_region = 'ord'
+app = 'cog-flux'
+primary_region = 'ams'
 
 [experimental]
   cmd = ['./start.sh']
 
 [build]
-  image = 'registry.fly.io/<APP_NAME>:latest'
+  image = 'registry.fly.io/cog-flux:latest'
 
 [env]
   COG_LOG_LEVEL = 'debug'
